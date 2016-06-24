@@ -1,11 +1,14 @@
 package org.openmrs.module.externalauth.filter;
 
 import org.apache.commons.codec.binary.Base64;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.openmrs.api.context.Context;
 
-import javax.servlet.*;
+import javax.servlet.Filter;
+import javax.servlet.FilterChain;
+import javax.servlet.FilterConfig;
+import javax.servlet.ServletException;
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletResponse;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -13,7 +16,7 @@ import java.nio.charset.Charset;
 
 public class TwoFactorAuthenticationFilter implements Filter {
 
-    protected final Log log = LogFactory.getLog(getClass());
+    private OTPRestClient otpRestClient = new OTPRestClient();
 
     @Override
     public void init(FilterConfig filterConfig) throws ServletException {
@@ -40,6 +43,8 @@ public class TwoFactorAuthenticationFilter implements Filter {
                     if (!authCredentialsContainsOTP(authCredentials)) {
                         if (firstLevelAuth(authCredentials)) {
                             HttpServletResponse httpServletResponse = (HttpServletResponse) response;
+                            String[] userAndPass = decodeAndSplitAuthorizationHeader(authCredentials);
+                            otpRestClient.sendOTP(userAndPass[0]);
                             httpServletResponse.setStatus(204);
                             return;
                         } else {
@@ -54,10 +59,8 @@ public class TwoFactorAuthenticationFilter implements Filter {
 
                 if (authOne != null) {
                     try {
-                        authCredentials = authCredentials.substring(6); // remove the leading "Basic "
-                        String decoded = new String(Base64.decodeBase64(authCredentials), Charset.forName("UTF-8"));
-                        String[] userAndPass = decoded.split(":");
-                        if (validateOTP(userAndPass[2])) {
+                        String[] userAndPass = decodeAndSplitAuthorizationHeader(authCredentials);
+                        if (validateOTP(userAndPass[0], userAndPass[2])) {
                             httpRequest.getSession().removeAttribute("authOne");
                             Context.authenticate(userAndPass[0], userAndPass[1]);
                         } else {
@@ -65,10 +68,10 @@ public class TwoFactorAuthenticationFilter implements Filter {
                             httpServletResponse.setStatus(401);
                             return;
                         }
-                    }
-                    catch (Exception ex) {
+                    } catch (Exception ex) {
                         // This filter never stops execution. If the user failed to
                         // authenticate, that will be caught later.
+                        ex.printStackTrace();
                     }
 
                 }
@@ -81,30 +84,30 @@ public class TwoFactorAuthenticationFilter implements Filter {
     }
 
     private boolean authCredentialsContainsOTP(String authCredentials) {
-        authCredentials = authCredentials.substring(6); // remove the leading "Basic "
-        String decoded = new String(Base64.decodeBase64(authCredentials), Charset.forName("UTF-8"));
-        String[] credentials = decoded.split(":");
-        return (credentials.length == 3);
+        return (decodeAndSplitAuthorizationHeader(authCredentials).length == 3);
     }
 
-    private boolean validateOTP(String otp) {
-        return otp.equalsIgnoreCase("123456");
+    private String[] decodeAndSplitAuthorizationHeader(String encodedString) {
+        encodedString = encodedString.substring(6); // remove the leading "Basic "
+        String decoded = new String(Base64.decodeBase64(encodedString), Charset.forName("UTF-8"));
+        return decoded.split(":");
+    }
+
+    private boolean validateOTP(String userName, String otp) {
+        return otpRestClient.validateOTP(userName, otp);
     }
 
     private boolean firstLevelAuth(String authCredentials) throws IOException {
         boolean isAuthenticated = false;
         try {
-            authCredentials = authCredentials.substring(6); // remove the leading "Basic "
-            String decoded = new String(Base64.decodeBase64(authCredentials), Charset.forName("UTF-8"));
-            String[] userAndPass = decoded.split(":");
+            String[] userAndPass = decodeAndSplitAuthorizationHeader(authCredentials);
             Context.authenticate(userAndPass[0], userAndPass[1]);
             isAuthenticated = Context.isAuthenticated();
             if (isAuthenticated) {
                 Context.logout();
             }
-        }
-        catch (Exception e) {
-
+        } catch (Exception e) {
+            e.printStackTrace();
         }
         return isAuthenticated;
     }
