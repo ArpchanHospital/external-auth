@@ -7,7 +7,7 @@ public class OTPRestClient {
 
     private RestOperations restOperations = new RestTemplate();
 
-    public static final String OTP_URL = "http://localhost:8080/";
+    public static final String OTP_URL = "http://localhost:8058/";
 
     public void sendOTP(String userName) {
         String url = String.format(OTP_URL + "send?userName=%s", userName);
