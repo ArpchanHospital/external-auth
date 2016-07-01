@@ -60,13 +60,23 @@ public class TwoFactorAuthenticationFilter implements Filter {
                 if (authOne != null) {
                     try {
                         String[] userAndPass = decodeAndSplitAuthorizationHeader(authCredentials);
-                        if (validateOTP(userAndPass[0], userAndPass[2])) {
-                            httpRequest.getSession().removeAttribute("authOne");
-                            Context.authenticate(userAndPass[0], userAndPass[1]);
-                        } else {
-                            HttpServletResponse httpServletResponse = (HttpServletResponse) response;
-                            httpServletResponse.setStatus(401);
-                            return;
+                        String status = validateOTP(userAndPass[0], userAndPass[2]);
+                        HttpServletResponse httpServletResponse;
+
+                        switch (status) {
+                            case "true":
+                                httpRequest.getSession().removeAttribute("authOne");
+                                Context.authenticate(userAndPass[0], userAndPass[1]);
+                                break;
+                            case "false":
+                                httpServletResponse = (HttpServletResponse) response;
+                                httpServletResponse.setStatus(401);
+                                return;
+                            default:
+                                httpServletResponse = (HttpServletResponse) response;
+                                httpRequest.getSession().removeAttribute("authOne");
+                                httpServletResponse.setStatus(429); // Too many requests (https://tools.ietf.org/html/rfc6585)
+                                return;
                         }
                     } catch (Exception ex) {
                         // This filter never stops execution. If the user failed to
@@ -93,7 +103,7 @@ public class TwoFactorAuthenticationFilter implements Filter {
         return decoded.split(":");
     }
 
-    private boolean validateOTP(String userName, String otp) {
+    private String validateOTP(String userName, String otp) {
         return otpRestClient.validateOTP(userName, otp);
     }
 

@@ -14,9 +14,8 @@ public class OTPRestClient {
         restOperations.getForObject(url, String.class);
     }
 
-    public boolean validateOTP(String userName, String otp) {
+    public String validateOTP(String userName, String otp) {
         String url = String.format(OTP_URL + "validate?userName=%s&otp=%s", userName, otp);
-        String response = restOperations.getForObject(url, String.class);
-        return Boolean.valueOf(response);
+        return restOperations.getForObject(url, String.class);
     }
 }
