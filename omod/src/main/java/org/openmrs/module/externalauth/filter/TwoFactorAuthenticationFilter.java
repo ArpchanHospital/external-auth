@@ -72,6 +72,10 @@ public class TwoFactorAuthenticationFilter implements Filter {
                                 httpServletResponse = (HttpServletResponse) response;
                                 httpServletResponse.setStatus(401);
                                 return;
+                            case "expired":
+                                httpServletResponse = (HttpServletResponse) response;
+                                httpServletResponse.setStatus(410); // Gone
+                                return;
                             default:
                                 httpServletResponse = (HttpServletResponse) response;
                                 httpRequest.getSession().removeAttribute("authOne");
