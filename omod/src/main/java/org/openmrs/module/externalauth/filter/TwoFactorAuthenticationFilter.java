@@ -1,6 +1,8 @@
 package org.openmrs.module.externalauth.filter;
 
 import org.apache.commons.codec.binary.Base64;
+import org.openmrs.Role;
+import org.openmrs.User;
 import org.openmrs.api.context.Context;
 
 import javax.servlet.Filter;
@@ -13,6 +15,7 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.Charset;
+import java.util.Set;
 
 public class TwoFactorAuthenticationFilter implements Filter {
 
@@ -42,11 +45,14 @@ public class TwoFactorAuthenticationFilter implements Filter {
                 if (authOne == null) {
                     if (!authCredentialsContainsOTP(authCredentials)) {
                         if (firstLevelAuth(authCredentials)) {
-                            HttpServletResponse httpServletResponse = (HttpServletResponse) response;
-                            String[] userAndPass = decodeAndSplitAuthorizationHeader(authCredentials);
-                            otpRestClient.sendOTP(userAndPass[0]);
-                            httpServletResponse.setStatus(204);
-                            return;
+                            if (!shouldBypass2FA()) {
+                                Context.logout();
+                                HttpServletResponse httpServletResponse = (HttpServletResponse) response;
+                                String[] userAndPass = decodeAndSplitAuthorizationHeader(authCredentials);
+                                otpRestClient.sendOTP(userAndPass[0]);
+                                httpServletResponse.setStatus(204);
+                                return;
+                            }
                         } else {
                             filterChain.doFilter(request, response);
                             return;
@@ -97,6 +103,13 @@ public class TwoFactorAuthenticationFilter implements Filter {
         filterChain.doFilter(request, response);
     }
 
+    private boolean shouldBypass2FA() {
+        User user = Context.getAuthenticatedUser();
+        Set<Role> roles = user.getRoles();
+        Role bypass2FA = Context.getUserService().getRole("bypass2FA");
+        return roles.contains(bypass2FA);
+    }
+
     private boolean authCredentialsContainsOTP(String authCredentials) {
         return (decodeAndSplitAuthorizationHeader(authCredentials).length == 3);
     }
@@ -117,9 +130,6 @@ public class TwoFactorAuthenticationFilter implements Filter {
             String[] userAndPass = decodeAndSplitAuthorizationHeader(authCredentials);
             Context.authenticate(userAndPass[0], userAndPass[1]);
             isAuthenticated = Context.isAuthenticated();
-            if (isAuthenticated) {
-                Context.logout();
-            }
         } catch (Exception e) {
             e.printStackTrace();
         }
