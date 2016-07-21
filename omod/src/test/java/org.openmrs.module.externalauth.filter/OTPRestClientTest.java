@@ -42,4 +42,11 @@ public class OTPRestClientTest {
         verify(restOperations, times(1)).getForObject(eq(validateURL), eq(String.class));
         assertThat(isOTPValid, is("true"));
     }
+
+    @Test
+    public void shouldCallSecurityAppToReSendOTP() {
+        otpRestClient.resendOTP("username");
+
+        verify(restOperations, times(1)).getForObject(eq(URL + "/resend?userName=username"), eq(String.class));
+    }
 }

@@ -7,15 +7,20 @@ public class OTPRestClient {
 
     private RestOperations restOperations = new RestTemplate();
 
-    public static final String OTP_URL = "http://localhost:8058/";
+    public static final String OTP_URL = "http://localhost:8058";
 
     public void sendOTP(String userName) {
-        String url = String.format(OTP_URL + "send?userName=%s", userName);
+        String url = String.format(OTP_URL + "/send?userName=%s", userName);
         restOperations.getForObject(url, String.class);
     }
 
     public String validateOTP(String userName, String otp) {
-        String url = String.format(OTP_URL + "validate?userName=%s&otp=%s", userName, otp);
+        String url = String.format(OTP_URL + "/validate?userName=%s&otp=%s", userName, otp);
+        return restOperations.getForObject(url, String.class);
+    }
+
+    public String resendOTP(String userName) {
+        String url = String.format(OTP_URL + "/resend?userName=%s", userName);
         return restOperations.getForObject(url, String.class);
     }
 }

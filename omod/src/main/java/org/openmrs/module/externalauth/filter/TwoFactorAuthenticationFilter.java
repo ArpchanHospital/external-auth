@@ -22,83 +22,80 @@ public class TwoFactorAuthenticationFilter implements Filter {
     private OTPRestClient otpRestClient = new OTPRestClient();
 
     @Override
-    public void init(FilterConfig filterConfig) throws ServletException {
-
-    }
-
-    @Override
-    public void doFilter(ServletRequest request, ServletResponse response, FilterChain filterChain) throws IOException,
-            ServletException {
+    public void doFilter(ServletRequest request, ServletResponse response, FilterChain filterChain) throws IOException, ServletException {
         // skip if the session has timed out, we're already authenticated, or it's not an HTTP request
-        if (request instanceof HttpServletRequest) {
-            HttpServletRequest httpRequest = (HttpServletRequest) request;
-            if (!Context.isAuthenticated()) {
-                String authCredentials = httpRequest.getHeader("Authorization");
-                Object authOne = httpRequest.getSession().getAttribute("authOne");
-                if (authCredentials == null) {
-                    if (authOne != null) {
-                        httpRequest.getSession().removeAttribute("authOne");
-                    }
-                    filterChain.doFilter(request, response);
-                    return;
+        if (request instanceof HttpServletRequest && !Context.isAuthenticated()) {
+            HttpServletRequest httpServletRequest = (HttpServletRequest) request;
+            HttpServletResponse httpServletResponse = (HttpServletResponse) response;
+
+            String authorization = httpServletRequest.getHeader("Authorization");
+            Object authOne = httpServletRequest.getSession().getAttribute("authOne");
+            if (authorization == null) {
+                if (authOne != null) {
+                    httpServletRequest.getSession().removeAttribute("authOne");
                 }
-                if (authOne == null) {
-                    if (!authCredentialsContainsOTP(authCredentials)) {
-                        if (firstLevelAuth(authCredentials)) {
-                            if (!shouldBypass2FA()) {
-                                Context.logout();
-                                HttpServletResponse httpServletResponse = (HttpServletResponse) response;
-                                String[] userAndPass = decodeAndSplitAuthorizationHeader(authCredentials);
-                                otpRestClient.sendOTP(userAndPass[0]);
-                                httpServletResponse.setStatus(204);
-                                return;
-                            }
-                        } else {
-                            filterChain.doFilter(request, response);
+                filterChain.doFilter(request, response);
+                return;
+            }
+
+            String[] credentials = decodeAndSplitAuthorization(authorization);
+            boolean resendOTP = Boolean.valueOf(request.getParameter("resendOTP"));
+
+            if (authOne == null && !resendOTP) {
+                if (credentials.length == 2) {
+                    if (verifyUserNameAndPassword(credentials[0], credentials[1])) {
+                        if (!shouldBypass2FA()) {
+                            Context.logout();
+                            otpRestClient.sendOTP(credentials[0]);
+                            httpServletResponse.setStatus(204);
                             return;
                         }
                     } else {
-                        httpRequest.getSession().setAttribute("authOne", true);
-                        authOne = httpRequest.getSession().getAttribute("authOne");
+                        filterChain.doFilter(request, response);
+                        return;
                     }
-                }
-
-                if (authOne != null) {
-                    try {
-                        String[] userAndPass = decodeAndSplitAuthorizationHeader(authCredentials);
-                        String status = validateOTP(userAndPass[0], userAndPass[2]);
-                        HttpServletResponse httpServletResponse;
-
-                        switch (status) {
-                            case "true":
-                                httpRequest.getSession().removeAttribute("authOne");
-                                Context.authenticate(userAndPass[0], userAndPass[1]);
-                                break;
-                            case "false":
-                                httpServletResponse = (HttpServletResponse) response;
-                                httpServletResponse.setStatus(401);
-                                return;
-                            case "expired":
-                                httpServletResponse = (HttpServletResponse) response;
-                                httpServletResponse.setStatus(410); // Gone
-                                return;
-                            default:
-                                httpServletResponse = (HttpServletResponse) response;
-                                httpRequest.getSession().removeAttribute("authOne");
-                                httpServletResponse.setStatus(429); // Too many requests (https://tools.ietf.org/html/rfc6585)
-                                return;
-                        }
-                    } catch (Exception ex) {
-                        // This filter never stops execution. If the user failed to
-                        // authenticate, that will be caught later.
-                        ex.printStackTrace();
-                    }
-
+                } else {
+                    httpServletRequest.getSession().setAttribute("authOne", true);
+                    authOne = httpServletRequest.getSession().getAttribute("authOne");
                 }
             }
 
-        }
+            if (resendOTP) {
+                String status = otpRestClient.resendOTP(credentials[0]);
+                if ("max_resend_attempts_exceeded".equals(status)) {
+                    httpServletRequest.getSession().removeAttribute("authOne");
+                    httpServletResponse.setStatus(429); // Too many requests (https://tools.ietf.org/html/rfc6585)
+                }
+                return;
+            }
 
+            if (authOne != null) {
+                try {
+                    String status = validateOTP(credentials[0], credentials[2]);
+                    switch (status) {
+                        case "true":
+                            httpServletRequest.getSession().removeAttribute("authOne");
+                            Context.authenticate(credentials[0], credentials[1]);
+                            break;
+                        case "false":
+                            httpServletResponse.setStatus(401);
+                            return;
+                        case "expired":
+                            httpServletRequest.getSession().removeAttribute("authOne");
+                            httpServletResponse.setStatus(410); // Gone
+                            return;
+                        default:
+                            httpServletRequest.getSession().removeAttribute("authOne");
+                            httpServletResponse.setStatus(429); // Too many requests (https://tools.ietf.org/html/rfc6585)
+                            return;
+                    }
+                } catch (Exception ex) {
+                    // This filter never stops execution. If the user failed to
+                    // authenticate, that will be caught later.
+                    ex.printStackTrace();
+                }
+            }
+        }
         // continue with the filter chain in all circumstances
         filterChain.doFilter(request, response);
     }
@@ -110,11 +107,7 @@ public class TwoFactorAuthenticationFilter implements Filter {
         return roles.contains(bypass2FA);
     }
 
-    private boolean authCredentialsContainsOTP(String authCredentials) {
-        return (decodeAndSplitAuthorizationHeader(authCredentials).length == 3);
-    }
-
-    private String[] decodeAndSplitAuthorizationHeader(String encodedString) {
+    private String[] decodeAndSplitAuthorization(String encodedString) {
         encodedString = encodedString.substring(6); // remove the leading "Basic "
         String decoded = new String(Base64.decodeBase64(encodedString), Charset.forName("UTF-8"));
         return decoded.split(":");
@@ -124,11 +117,10 @@ public class TwoFactorAuthenticationFilter implements Filter {
         return otpRestClient.validateOTP(userName, otp);
     }
 
-    private boolean firstLevelAuth(String authCredentials) throws IOException {
+    private boolean verifyUserNameAndPassword(String username, String password) throws IOException {
         boolean isAuthenticated = false;
         try {
-            String[] userAndPass = decodeAndSplitAuthorizationHeader(authCredentials);
-            Context.authenticate(userAndPass[0], userAndPass[1]);
+            Context.authenticate(username, password);
             isAuthenticated = Context.isAuthenticated();
         } catch (Exception e) {
             e.printStackTrace();
@@ -137,7 +129,10 @@ public class TwoFactorAuthenticationFilter implements Filter {
     }
 
     @Override
-    public void destroy() {
+    public void init(FilterConfig filterConfig) throws ServletException {
+    }
 
+    @Override
+    public void destroy() {
     }
 }
